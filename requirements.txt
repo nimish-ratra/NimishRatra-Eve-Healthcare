@@ -1,0 +1,13 @@
+# Production dependencies
+django>=5.1,<6.2
+djangorestframework>=3.15.0
+djangorestframework-simplejwt>=5.4.0
+drf-spectacular>=0.28.0
+django-filter>=24.3
+psycopg[binary]>=3.2.0
+
+# Development, testing, and quality tooling
+pytest>=8.3.0
+pytest-django>=4.9.0
+coverage>=7.6.0
+ruff>=0.8.0

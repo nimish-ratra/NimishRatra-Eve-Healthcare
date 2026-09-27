@@ -1,0 +1,78 @@
+[project]
+name = "eve-healthcare-backend"
+version = "1.0.0"
+description = "EVE Healthcare Diagnostic Booking & Simulated Payments Monolith Backend"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "django>=5.1,<6.2",
+    "djangorestframework>=3.15.0",
+    "djangorestframework-simplejwt>=5.4.0",
+    "drf-spectacular>=0.28.0",
+    "django-filter>=24.3",
+    "psycopg[binary]>=3.2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3.0",
+    "pytest-django>=4.9.0",
+    "coverage>=7.6.0",
+    "ruff>=0.8.0",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+exclude = [
+    ".git",
+    ".venv",
+    "__pycache__",
+    "build",
+    "dist",
+    "*/migrations/*",
+]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "UP",  # pyupgrade
+]
+ignore = [
+    "B008", # do not perform function calls in argument defaults (standard in DRF/FastAPI field specs)
+    "E501", # line too long (handled by formatter)
+]
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "config.settings"
+python_files = ["test_*.py", "*_test.py"]
+testpaths = ["tests", "accounts", "catalog", "bookings", "payments", "common"]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::PendingDeprecationWarning",
+]
+addopts = "--strict-markers -v"
+
+[tool.coverage.run]
+source = ["accounts", "catalog", "bookings", "payments", "common"]
+omit = [
+    "*/migrations/*",
+    "*/tests/*",
+    "config/*",
+    "manage.py",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "pass",
+]
+show_missing = true
