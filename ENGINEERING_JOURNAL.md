@@ -345,6 +345,32 @@ In accordance with the EVE Healthcare SDE Backend Assessment guidelines, an exha
 | **Full Automated Tests** | `pytest` | **55 passed** in 15.97s | **PASS** |
 | **Code Coverage** | `pytest --cov=. --cov-report=term-missing` | **88% overall statement coverage** | **PASS** |
 | **OpenAPI Schema** | `python manage.py spectacular --validate --fail-on-warn` | Validated with **0 errors and 0 warnings** | **PASS** |
-| **Concurrency Invariants** | `pytest -k test_concurrency -v` | **4 passed** (Cancel/Webhook, Duplicate Webhook, Same-Key Payment, Cross-Booking Conflict) | **PASS** |
+### 8.9 CI Failure Diagnosis & GitHub Actions Status
+
+#### CI FAILURE DIAGNOSIS
+- **Failed Command**: `pytest --cov=. --cov-report=term-missing` in step *"Run Test Suite against PostgreSQL"*.
+- **Run ID**: `36456400335` (commit `b503f56`).
+- **Actual Failure**: CI failed during pytest invocation because the `--cov` argument was unrecognized by pytest.
+- **Root Cause**: `requirements.txt` had `coverage>=7.6.0` declared, but was missing the `pytest-cov` plugin required for pytest's command-line coverage flags. When `pip install -r requirements.txt` executed in the GitHub Actions runner, `pytest-cov` was not installed.
+- **Fix**:
+  1. Added `pytest-cov>=6.0.0` directly to `requirements.txt` and `pyproject.toml`.
+  2. Implemented nested savepoint isolation (`with transaction.atomic():`) in `payments/services.py` so that unique constraint collisions under PostgreSQL concurrency never abort the outer transaction block.
+  3. Added `ruff format --check .` to the CI workflow to enforce formatting alongside linting.
+- **Verification Result**: 
+  - Subsequent commit `c1d272d` triggered GitHub Actions run `36461238989`.
+  - Result: **COMPLETED / SUCCESS** across all 14 steps.
+  - Step breakdown:
+    - *Set up job*: Success
+    - *Initialize containers (postgres:16-alpine)*: Success
+    - *Checkout Code*: Success
+    - *Set up Python 3.12*: Success
+    - *Install Dependencies*: Success
+    - *Run Ruff Lint Checks*: Success
+    - *Check for Missing Migrations*: Success
+    - *Run Test Suite against PostgreSQL*: Success
+    - *Validate OpenAPI Schema Generation*: Success
+    - *Build Docker Image*: Success
+    - *Post-job teardown & completion*: Success
+
 
 
