@@ -153,7 +153,7 @@ To guarantee long-term maintainability, the codebase adheres strictly to layer i
 │   ├── permissions.py             # IsAdminUserRole, IsBookingOwner
 │   ├── throttling.py              # Scoped rate limiters (auth, webhook, user burst)
 │   └── views.py                   # /health/live/ and /health/ready/ endpoints
-├── tests/                         # Automated test suite (54 tests, 88% coverage)
+├── tests/                         # Automated test suite (55 tests, 88% coverage)
 │   ├── conftest.py                # Reusable fixtures and test clients
 │   ├── test_auth.py               # Authentication and permission tests
 │   ├── test_catalog.py            # Centre browsing and admin catalogue tests
@@ -165,7 +165,7 @@ To guarantee long-term maintainability, the codebase adheres strictly to layer i
 ├── Dockerfile                     # Multi-stage Python 3.12-slim production Dockerfile
 ├── docker-compose.yml             # Local stack: api, postgres:16-alpine, redis:7-alpine
 ├── pyproject.toml                 # Package configuration, Ruff settings, Pytest options
-├── requirements.txt               # Pinned dependencies
+├── requirements.txt               # Version-constrained dependencies (with minimum and compatible upper bounds)
 ├── .env.example                   # Annotated environment variable configuration
 ├── CONTEXT.md                     # Persistent architectural context document
 ├── ENGINEERING_JOURNAL.md         # Comprehensive chronological implementation record
@@ -182,8 +182,8 @@ The fastest and most reliable way to run the complete stack (API + PostgreSQL 16
 
 ```bash
 # 1. Clone the repository
-git clone <repo-url>
-cd Eve_Health
+git clone https://github.com/nimish-ratra/NimishRatra-Eve-Healthcare.git
+cd NimishRatra-Eve-Healthcare
 
 # 2. Copy the environment configuration template
 cp .env.example .env
@@ -517,7 +517,7 @@ All domain errors return a predictable JSON envelope with a correlation request 
 
 ## 17. Automated Testing Suite
 
-The repository contains **54 comprehensive automated tests** achieving **88% code coverage**.
+The repository contains **55 comprehensive automated tests** achieving **88% code coverage**.
 
 ### Test Execution Commands
 

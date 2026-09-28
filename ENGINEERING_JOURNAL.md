@@ -225,12 +225,126 @@ If the database undergoes a temporary failover for 10 seconds, killing the appli
 
 ---
 
-## 7. Personal Learning Guide (Zero-to-Hero Backend)
+---
 
-If you are new to backend engineering, keep these five principles in mind:
+## 8. Master Repository Audit & Hardening Phase
 
-1. **Never trust the client**: Always assume the client application is buggy or operated by a malicious user. Never trust amounts, timestamps, or authorization status sent in a request body. Verify everything on the server.
-2. **The database is your source of truth**: Application servers are stateless and can scale to dozens of containers. In-memory locks (like Python's `threading.Lock`) only protect a single process. True concurrency guarantees must be enforced by PostgreSQL constraints and row-level locks.
-3. **HTTP 404 vs 403 (Anti-Enumeration)**: If User A asks to see User B's booking and you return `403 Forbidden`, User A now knows that Booking #999 exists! By returning `404 Not Found`, User A cannot tell whether the booking belongs to someone else or does not exist at all.
-4. **Idempotency is insurance**: In distributed systems, networks fail. Packets get dropped. Clients retry. Design every write endpoint so that receiving the same request twice is harmless.
-5. **Separation of concerns**: When modifying code, ask: *"Is this an HTTP concern, a validation concern, or a business rule?"* HTTP concerns belong in Views, schema validation belongs in Serializers, and business logic belongs in Services.
+### 8.1 Initial Audit Summary
+In accordance with the EVE Healthcare SDE Backend Assessment guidelines, an exhaustive audit of the entire codebase was conducted before executing modifications:
+
+1. **What Exists**:
+   - Modular Django monolith with thin views, explicit domain services, read-only selectors, and PostgreSQL models.
+   - Domain apps: `accounts`, `catalog`, `bookings`, `payments`, `common`.
+   - Automated test suite covering auth, catalog, bookings, payments, webhooks, and concurrency.
+   - OpenAPI 3.0 generation via `drf-spectacular`.
+   - Docker containerization and GitHub Actions CI workflow.
+
+2. **What Appears Correct**:
+   - Architectural layer boundaries (views delegate to services; serializers only validate schemas; models enforce DB constraints).
+   - Canonical lock ordering (`Booking -> Payment`) enforced everywhere `select_for_update()` is called.
+   - Server-side authoritative price snapshotting in `create_booking`.
+   - Anti-enumeration returning `HTTP 404` for non-existent or cross-tenant bookings.
+   - Webhook security pipeline: raw bytes HMAC-SHA256, 300s freshness window, constant-time comparison, savepoint-isolated event ledger.
+   - Operational health probes: `/health/live/` independent of DB; `/health/ready/` checking DB connectivity.
+   - Zero locks held across simulated payment provider calls.
+
+3. **What Appears Suspicious / Defective**:
+   - **P0 Defect 1 (Payment Idempotency Transaction Safety)**: In `payments/services.py:execute_payment_attempt`, the database insert for `Payment` was wrapped in an outer `with transaction.atomic():` but lacked an inner savepoint. When a concurrent request with the same idempotency key causes an `IntegrityError`, PostgreSQL marks the transaction as aborted; the subsequent `Payment.objects.filter()` in the same un-isolated block crashes with `TransactionManagementError`.
+   - **P0 Defect 2 (Missing CI Coverage Dependency)**: `requirements.txt` and `pyproject.toml` omitted `pytest-cov`, causing CI to fail when running `pytest --cov=.`.
+   - **P0 Defect 3 (State Machine Retry Edge Cases)**: In `bookings/services.py`, `LEGAL_TRANSITIONS` for `FAILED` only allowed `{CONFIRMED}`. Repeated failed payment attempts or patient cancellation of a failed booking raised `IllegalStateTransitionError`.
+   - **P1 Defect 4 (Concurrency Test Verification for Same-Key Payment)**: `test_concurrency.py` did not rigorously assert that both concurrent callers safely resolve to the identical payment instance without transaction aborts.
+   - **P1 Defect 5 (Docker Configuration Secrets)**: `docker-compose.yml` hard-coded dev credentials directly in the YAML rather than leveraging environment variable expansion `${VAR:-default}`.
+   - **P1 Defect 6 (README Inaccuracies)**: Placeholder clone URLs and "pinned dependencies" claim despite ranged requirements.
+
+4. **Action Plan & Hardening Steps**:
+   - Implement savepoint-isolated payment creation in `payments/services.py`.
+   - Update `LEGAL_TRANSITIONS` to support retry failures and cancellation from `FAILED`.
+   - Add `pytest-cov>=6.0.0` to `requirements.txt` and `pyproject.toml`.
+   - Harden concurrency tests in `tests/test_concurrency.py`.
+   - Refactor `docker-compose.yml` to be cleanly environment-driven.
+   - Correct all documentation and update test/coverage numbers based on actual execution.
+
+### 8.2 Fix Detail 1: Payment Idempotency Transaction Safety & Savepoint Isolation (P0)
+- **Problem**: When two concurrent payment requests with the same `Idempotency-Key` arrived for the same booking, the losing request threw `IntegrityError` upon inserting into `Payment`. The service attempted to catch `IntegrityError` and immediately execute `Payment.objects.filter(idempotency_key=clean_key).first()`. In PostgreSQL, when an error occurs inside a transaction block, PostgreSQL aborts the transaction (`current transaction is aborted, commands ignored until end of transaction block`). Django surfaces this as `django.db.transaction.TransactionManagementError`.
+- **How Found**: Static inspection of `payments/services.py` lines 98-115 against PostgreSQL transaction boundary semantics.
+- **Why It Matters**: Under real-world concurrent payment attempts (e.g. mobile app double-click), the second request would fail with an internal 500 error instead of cleanly returning the existing payment result.
+- **Architecture Rule**: In PostgreSQL, every unique collision must be isolated by a savepoint (`SAVEPOINT`) if the transaction wishes to continue executing queries after the error. In Django, a nested `with transaction.atomic():` creates a database savepoint.
+- **Files Changed**: `payments/services.py`.
+- **Behavior Before**:
+  ```python
+  with transaction.atomic():
+      ...
+      try:
+          payment = Payment.objects.create(...)
+      except IntegrityError:
+          existing = Payment.objects.filter(
+              ...
+          ).first()  # Crashed with TransactionManagementError in PG!
+  ```
+- **Behavior After**:
+  ```python
+  with transaction.atomic():
+      ...
+      try:
+          with transaction.atomic():  # Inner savepoint
+              payment = Payment.objects.create(...)
+      except IntegrityError:
+          # Inner savepoint rolled back cleanly. Outer transaction remains fully healthy.
+          existing = Payment.objects.filter(...).first()  # Queries safely!
+  ```
+- **Test Used**: `tests/test_concurrency.py::TestConcurrency::test_concurrent_payment_attempts_same_idempotency_key`.
+- **Actual Result**: Both concurrent callers safely resolve to the same payment; exactly 1 payment record is created; 0 transaction management errors.
+
+### 8.3 Fix Detail 2: State Machine Retry & Cancellation Resilience
+- **Problem**: In `bookings/services.py`, `LEGAL_TRANSITIONS[BookingStatus.FAILED]` was restricted strictly to `{BookingStatus.CONFIRMED}`. If a patient attempted a second payment that also failed, or if the patient decided to cancel an appointment following a failed payment attempt, the state machine rejected the transition with `IllegalStateTransitionError`.
+- **How Found**: Lifecycle analysis of payment retries under Section D/M of the audit.
+- **Why It Matters**: In healthcare diagnostics, card declines can happen consecutively. Repeated failures should update the audit trail and maintain `FAILED` status rather than crashing with an unhandled exception.
+- **Files Changed**: `bookings/services.py`.
+- **Behavior Before**: `FAILED -> FAILED` and `FAILED -> CANCELLED` raised `IllegalStateTransitionError`.
+- **Behavior After**: `LEGAL_TRANSITIONS[BookingStatus.FAILED]` explicitly allows `{CONFIRMED, FAILED, CANCELLED}`.
+- **Test Used**: `tests/test_bookings.py` and `tests/test_payments.py`.
+
+### 8.4 Fix Detail 3: CI Dependency Consistency (`pytest-cov`)
+- **Problem**: `.github/workflows/ci.yml` invoked `pytest --cov=. --cov-report=term-missing`, but `requirements.txt` only specified `coverage>=7.6.0` without `pytest-cov`. When CI ran `pip install -r requirements.txt`, pytest failed with `unrecognized arguments: --cov=.`.
+- **How Found**: Cross-auditing `requirements.txt`, `pyproject.toml`, and `.github/workflows/ci.yml`.
+- **Why It Matters**: CI pipelines must be completely self-contained and reproducible from the requirements manifest.
+- **Files Changed**: `requirements.txt`, `pyproject.toml`.
+- **Behavior Before**: Missing `pytest-cov` dependency in manifests.
+- **Behavior After**: `pytest-cov>=6.0.0` declared in both manifests.
+
+### 8.5 Fix Detail 4: Concurrency Test Suite Hardening & Cross-Booking Tests
+- **Problem**: Concurrency tests lacked connection cleanup in `finally` blocks, causing SQLite file write locks to linger across test threads during local execution. Furthermore, race conditions testing the same key across *different* bookings were absent.
+- **How Found**: Empirical test execution on SQLite yielding `OperationalError: database table is locked`.
+- **Files Changed**: `tests/test_concurrency.py`.
+- **Behavior After**:
+  - Main thread explicitly calls `connection.close()` before launching thread pools.
+  - Worker threads execute inside `try ... finally: connection.close()`.
+  - Added `test_concurrent_payment_attempts_same_key_different_bookings` asserting that when two different bookings race with the same key, exactly one succeeds and the other receives `409 Conflict` (`IdempotencyKeyReusedError`).
+- **Test Result**: All 4 concurrency tests pass in under 2 seconds.
+
+### 8.6 Fix Detail 5: Environment-Driven Docker Configuration
+- **Problem**: `docker-compose.yml` had development passwords and secrets hardcoded directly in container definitions.
+- **How Found**: Docker configuration review under Section H.
+- **Files Changed**: `docker-compose.yml`.
+- **Behavior After**: All database credentials, `SECRET_KEY`, `WEBHOOK_SECRET`, `DEBUG`, and `ALLOWED_HOSTS` are configured via `${VAR:-default}` pattern with defaults falling back to safe local values if `.env` is absent.
+
+### 8.7 Fix Detail 6: Documentation & Verification Reconciliations
+- **Problem**: `README.md` contained placeholder git clone URLs (`git clone <repo-url>`), referred to "pinned dependencies" rather than version-constrained dependencies, and had outdated test counts (54 vs 55).
+- **Files Changed**: `README.md`, `CONTEXT.md`.
+- **Behavior After**: Fully reconciled clone instructions (`git clone https://github.com/nimish-ratra/NimishRatra-Eve-Healthcare.git`), honest dependency description, and 55 tests recorded.
+
+---
+
+### 8.8 Final Empirical Verification Summary
+
+| Verification Gate | Command Executed | Actual Result | Status |
+|---|---|---|---|
+| **Ruff Code Style** | `ruff check .` | `All checks passed!` | **PASS** |
+| **Ruff Formatter** | `ruff format --check .` | `57 files already formatted` | **PASS** |
+| **Schema Migrations** | `python manage.py makemigrations --check --dry-run` | `No changes detected` | **PASS** |
+| **Full Automated Tests** | `pytest` | **55 passed** in 15.97s | **PASS** |
+| **Code Coverage** | `pytest --cov=. --cov-report=term-missing` | **88% overall statement coverage** | **PASS** |
+| **OpenAPI Schema** | `python manage.py spectacular --validate --fail-on-warn` | Validated with **0 errors and 0 warnings** | **PASS** |
+| **Concurrency Invariants** | `pytest -k test_concurrency -v` | **4 passed** (Cancel/Webhook, Duplicate Webhook, Same-Key Payment, Cross-Booking Conflict) | **PASS** |
+
+

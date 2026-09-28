@@ -4,15 +4,15 @@ services:
     container_name: eve_postgres
     restart: unless-stopped
     environment:
-      POSTGRES_DB: eve_healthcare_db
-      POSTGRES_USER: eve_user
-      POSTGRES_PASSWORD: eve_secure_password_dev
+      POSTGRES_DB: ${DB_NAME:-eve_healthcare_db}
+      POSTGRES_USER: ${DB_USER:-eve_user}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-eve_secure_password_dev}
     ports:
-      - "5432:5432"
+      - "${DB_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U eve_user -d eve_healthcare_db"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-eve_user} -d ${DB_NAME:-eve_healthcare_db}"]
       interval: 3s
       timeout: 3s
       retries: 10
@@ -39,19 +39,19 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - DEBUG=True
-      - SECRET_KEY=django-insecure-eve-healthcare-dev-key-!#99x-change-in-production
-      - ALLOWED_HOSTS=localhost,127.0.0.1,0.0.0.0,web
+      - DEBUG=${DEBUG:-True}
+      - SECRET_KEY=${SECRET_KEY:-django-insecure-eve-healthcare-dev-key-!#99x-change-in-production}
+      - ALLOWED_HOSTS=${ALLOWED_HOSTS:-localhost,127.0.0.1,0.0.0.0,web}
       - DB_ENGINE=django.db.backends.postgresql
-      - DB_NAME=eve_healthcare_db
-      - DB_USER=eve_user
-      - DB_PASSWORD=eve_secure_password_dev
-      - DB_HOST=db
-      - DB_PORT=5432
+      - DB_NAME=${DB_NAME:-eve_healthcare_db}
+      - DB_USER=${DB_USER:-eve_user}
+      - DB_PASSWORD=${DB_PASSWORD:-eve_secure_password_dev}
+      - DB_HOST=${DB_HOST:-db}
+      - DB_PORT=${DB_PORT:-5432}
       - USE_SQLITE=False
-      - WEBHOOK_SECRET=dev_shared_webhook_secret_key_eve_healthcare_2026
-      - WEBHOOK_TIMESTAMP_TOLERANCE_SECONDS=300
-      - REDIS_URL=redis://redis:6379/1
+      - WEBHOOK_SECRET=${WEBHOOK_SECRET:-dev_shared_webhook_secret_key_eve_healthcare_2026}
+      - WEBHOOK_TIMESTAMP_TOLERANCE_SECONDS=${WEBHOOK_TIMESTAMP_TOLERANCE_SECONDS:-300}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/1}
     depends_on:
       db:
         condition: service_healthy

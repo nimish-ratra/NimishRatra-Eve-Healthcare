@@ -43,6 +43,7 @@ jobs:
       - name: Run Ruff Lint Checks
         run: |
           ruff check .
+          ruff format --check .
 
       - name: Check for Missing Migrations
         env:

@@ -31,6 +31,10 @@ LEGAL_TRANSITIONS: dict[str, set[str]] = {
     BookingStatus.FAILED: {
         # Retry path: a new successful payment attempt can transition a FAILED booking to CONFIRMED
         BookingStatus.CONFIRMED,
+        # Retry failure: another payment attempt fails
+        BookingStatus.FAILED,
+        # Cancellation permitted after failed payment attempts
+        BookingStatus.CANCELLED,
     },
     BookingStatus.CONFIRMED: {
         # Cancellation permitted under policy

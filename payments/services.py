@@ -72,6 +72,7 @@ def execute_payment_attempt(
             )
 
     # Step 2: Validate Booking and initialize Attempt under row lock
+    is_idempotent_replay = False
     with transaction.atomic():
         try:
             # Canonical lock order: Lock Booking first
@@ -96,22 +97,45 @@ def execute_payment_attempt(
 
         temp_provider_ref = f"init_{uuid.uuid4().hex[:16]}"
         try:
-            payment = Payment.objects.create(
-                booking=booking,
-                idempotency_key=clean_key,
-                provider_reference=temp_provider_ref,
-                amount=booking.amount,
-                status=PaymentStatus.INITIATED,
-                attempt_number=attempt_number,
-            )
+            # P0 Invariant: Inner savepoint isolates IntegrityError so the outer transaction remains valid
+            with transaction.atomic():
+                payment = Payment.objects.create(
+                    booking=booking,
+                    idempotency_key=clean_key,
+                    provider_reference=temp_provider_ref,
+                    amount=booking.amount,
+                    status=PaymentStatus.INITIATED,
+                    attempt_number=attempt_number,
+                )
         except IntegrityError as exc:
-            # Concurrent race caught by DB constraint
+            # Inner savepoint rolled back cleanly. The outer transaction can safely execute queries.
             existing = Payment.objects.filter(idempotency_key=clean_key).first()
-            if existing and existing.booking_id == booking_id:
-                return existing, False
-            raise IdempotencyKeyReusedError(
-                "Idempotency key collision detected under concurrency."
-            ) from exc
+            if existing:
+                if existing.booking_id == booking_id:
+                    # Scenario 1: Same key + same booking -> safe replay of existing intent
+                    logger.info(
+                        f"Concurrent race safely resolved: key '{clean_key}' reuses existing payment {existing.id}."
+                    )
+                    payment = existing
+                    is_idempotent_replay = True
+                else:
+                    # Scenario 2: Same key + different booking -> 409 Conflict
+                    logger.warning(
+                        f"Idempotency collision under concurrency: key '{clean_key}' used for booking {existing.booking_id}, "
+                        f"attempted for {booking_id}."
+                    )
+                    raise IdempotencyKeyReusedError(
+                        "This idempotency key has already been used for a different booking."
+                    ) from exc
+            else:
+                raise IdempotencyKeyReusedError(
+                    "Payment creation failed due to unique constraint collision under concurrency."
+                ) from exc
+
+    # If this request was a concurrent duplicate that replayed an existing payment,
+    # skip external provider invocation and return the existing payment immediately.
+    if is_idempotent_replay:
+        return payment, False
 
     # Step 3: Invoke simulated payment gateway OUTSIDE of database row locks
     # In production, external network latency would block other database transactions.

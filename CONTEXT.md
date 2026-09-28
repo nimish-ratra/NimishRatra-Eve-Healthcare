@@ -1,7 +1,7 @@
 # EVE Healthcare - Diagnostic Booking & Payments Backend
 ## System Context & Final Architectural Blueprint
 
-*Last updated: Final Verification Completed - 100% Pass Rate across 54 Tests (88% Coverage)*
+*Last updated: Final Verification Completed - 100% Pass Rate across 55 Tests (88% Coverage)*
 
 ---
 
@@ -22,13 +22,13 @@ All critical correctness guarantees survive network retries, duplicate webhook d
 | **Ownership Isolation** | Scoped queries by `booking_id` + `request.user`. Anti-enumeration returns 404 for other patients' records. | `tests/test_bookings.py` |
 | **Booking State Machine** | Centralized finite state machine: `PENDING`, `CONFIRMED`, `FAILED`, `CANCELLED`. Resurrections strictly prevented. | `tests/test_bookings.py` |
 | **Simulated Payments** | Provider abstraction `BasePaymentProvider` with deterministic `FakePaymentProvider`. Attempt numbering. | `tests/test_payments.py` (7 tests) |
-| **Payment Idempotency** | Client `Idempotency-Key` header with database `UNIQUE(idempotency_key)`. Same key replayed; different booking returns 409. | `tests/test_payments.py` |
+| **Payment Idempotency** | Client `Idempotency-Key` header with database `UNIQUE(idempotency_key)`. Inner savepoint isolates `IntegrityError` so concurrent same-key requests safely replay without transaction abortion; different booking returns 409. | `tests/test_payments.py`, `tests/test_concurrency.py` |
 | **Webhook Ingestion** | Raw body HMAC-SHA256 verification, 300s timestamp freshness window, constant-time compare before JSON parsing. | `tests/test_webhooks.py` (9 tests) |
 | **Webhook Idempotency** | Savepoint-isolated atomic ledger `UNIQUE(event_id)`. Duplicate returns 200 acknowledged without side effects. | `tests/test_webhooks.py` |
-| **Concurrency Protection** | Canonical row locking (`Booking -> Payment`), re-read after lock, zero locks held during external provider calls. | `tests/test_concurrency.py` (3 tests) |
+| **Concurrency Protection** | Canonical row locking (`Booking -> Payment`), re-read after lock, zero locks held during external provider calls. | `tests/test_concurrency.py` (4 tests) |
 | **Observability & Health** | `X-Request-ID` correlation middleware, privacy-safe JSON logging, split `/health/live/` and `/health/ready/`. | `tests/test_operations.py` (7 tests) |
 | **API Documentation** | `drf-spectacular` generating complete OpenAPI 3.0 specification, Swagger UI (`/api/docs/`), ReDoc (`/api/redoc/`). | Validated with 0 warnings |
-| **Containerization & CI** | Production multi-stage `Dockerfile`, orchestrated `docker-compose.yml`, GitHub Actions workflow with Postgres 16. | Full CI workflow ready |
+| **Containerization & CI** | Production multi-stage `Dockerfile`, environment-driven `docker-compose.yml`, GitHub Actions workflow with Postgres 16. | Full CI workflow ready |
 
 ---
 
@@ -38,7 +38,7 @@ All critical correctness guarantees survive network retries, duplicate webhook d
 * **Database**: PostgreSQL 16 (authoritative transactional store and row-level locking)
 * **Authentication**: `djangorestframework-simplejwt`
 * **API Documentation**: `drf-spectacular`
-* **Containerization**: Docker Compose
+* **Containerization**: Docker Compose (environment-driven configuration)
 * **Quality Tooling**: `pytest`, `pytest-django`, `pytest-cov`, `ruff`
 * **Cache & Throttling**: Redis 7 (supportive infrastructure; never authoritative)
 
@@ -111,7 +111,7 @@ payments.WebhookEvent (Table: webhook_events)
 3. **Re-Read After Lock**: Always re-fetch and inspect the committed row status *after* acquiring a `select_for_update()` lock before making transition decisions.
 4. **Short Database Lock Duration**: Payment provider calls are executed *outside* database row locks. Intent is persisted, transaction committed, provider invoked, and state settled in a subsequent transaction.
 5. **HMAC Verification Order**: Always check raw request bytes + timestamp freshness *before* parsing the JSON body.
-6. **Savepoint-Isolated Webhook Ledger**: Inserting into `webhook_events` is wrapped in an inner nested `transaction.atomic()` savepoint so `IntegrityError` on duplicates does not spoil outer transaction state.
+6. **Savepoint-Isolated Payment & Webhook Operations**: Database writes that can encounter unique constraint collisions under concurrency (`Payment` idempotency key and `WebhookEvent` event ID) use nested atomic savepoints (`with transaction.atomic():`) so that collisions do not abort the outer transaction block.
 7. **No Cancellation Resurrections**: Once a booking reaches `CANCELLED`, it can never transition to any other status. Late webhooks and payment attempts are safely ignored or rejected.
 8. **Anti-Enumeration Ownership**: Bookings are queried by `id=booking_id, user=request.user`. Bookings belonging to another user return `HTTP 404 Not Found` (`BOOKING_NOT_FOUND`).
 
@@ -119,7 +119,7 @@ payments.WebhookEvent (Table: webhook_events)
 
 ### 6. Verification Status
 
-- **Automated Tests**: 54 passed (0 failed, 0 skipped) in 15.47s.
+- **Automated Tests**: 55 passed (0 failed, 0 skipped) in 15.97s.
 - **Code Coverage**: 88% overall statement coverage across all domain modules.
 - **Linter & Formatter**: Ruff check passed with 0 errors; all files formatted.
 - **Django Migrations**: Clean schema history, zero uncommitted or pending model changes.
