@@ -7,8 +7,6 @@ services:
       POSTGRES_DB: ${DB_NAME:-eve_healthcare_db}
       POSTGRES_USER: ${DB_USER:-eve_user}
       POSTGRES_PASSWORD: ${DB_PASSWORD:-eve_secure_password_dev}
-    ports:
-      - "${DB_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -17,18 +15,6 @@ services:
       timeout: 3s
       retries: 10
       start_period: 5s
-
-  redis:
-    image: redis:7-alpine
-    container_name: eve_redis
-    restart: unless-stopped
-    ports:
-      - "6379:6379"
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 5
 
   web:
     build:
@@ -51,11 +37,8 @@ services:
       - USE_SQLITE=False
       - WEBHOOK_SECRET=${WEBHOOK_SECRET:-dev_shared_webhook_secret_key_eve_healthcare_2026}
       - WEBHOOK_TIMESTAMP_TOLERANCE_SECONDS=${WEBHOOK_TIMESTAMP_TOLERANCE_SECONDS:-300}
-      - REDIS_URL=${REDIS_URL:-redis://redis:6379/1}
     depends_on:
       db:
-        condition: service_healthy
-      redis:
         condition: service_healthy
     command: >
       sh -c "python manage.py migrate &&

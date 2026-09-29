@@ -1,8 +1,7 @@
 # ==============================================================================
-# Multi-stage Dockerfile for EVE Healthcare Backend Monolith
-# Base image: Python 3.12-slim Debian
+# Dockerfile for EVE Healthcare Backend based on python:3.12-slim
 # ==============================================================================
-FROM python:3.12-slim AS base
+FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -36,5 +35,5 @@ EXPOSE 8000
 HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 \
     CMD curl -f http://localhost:8000/health/live/ || exit 1
 
-# Default command: apply migrations and boot Django development server
+# Default command: apply migrations, seed demo data, and start server
 CMD ["sh", "-c", "python manage.py migrate && python manage.py seed_demo_data && python manage.py runserver 0.0.0.0:8000"]

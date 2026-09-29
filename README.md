@@ -1,6 +1,6 @@
 # EVE Healthcare - Diagnostic Booking & Payments Backend API
 
-Production-ready modular Django monolith providing diagnostic test bookings, authoritative pricing snapshots, simulated payments with client idempotency, and cryptographically verified webhook reconciliation.
+Assessment-focused backend service for the EVE Healthcare SDE Intern Backend Assessment, implementing diagnostic scan centre discovery, authoritative price snapshotting, patient appointment scheduling, simulated payments with client idempotency, and cryptographically authenticated webhook reconciliation.
 
 ---
 
@@ -24,7 +24,7 @@ Unlike trivial CRUD systems, this service is engineered around **financial and t
 - **Booking Engine**: Timezone-aware future scheduling, authoritative price snapshotting, ownership isolation, and a deterministic finite state machine (`PENDING`, `CONFIRMED`, `FAILED`, `CANCELLED`).
 - **Simulated Payment Gateway**: Clean provider abstraction with deterministic `FakePaymentProvider`, attempt counter (`attempt_number`), and retry support for failed charges.
 - **Security-First Webhook Pipeline**: Raw-body HMAC verification, replay defense, savepoint-isolated database deduplication, and non-resurrection policy for cancelled appointments.
-- **Production Observability**: Request/correlation ID injection (`X-Request-ID`), privacy-first structured JSON logging (no PII or credentials logged), split liveness (`/health/live/`) and readiness (`/health/ready/`) probes.
+- **Observability & Diagnostics**: Request/correlation ID injection (`X-Request-ID`), privacy-first structured JSON logging (no PII or credentials logged), split liveness (`/health/live/`) and readiness (`/health/ready/`) probes.
 - **API Documentation**: Automated OpenAPI 3.0 specification with interactive Swagger UI and ReDoc interfaces generated via `drf-spectacular`.
 
 ---
@@ -34,13 +34,13 @@ Unlike trivial CRUD systems, this service is engineered around **financial and t
 | Layer / Concern | Chosen Technology | Justification |
 |---|---|---|
 | **Language & Runtime** | Python 3.12+ | Clean, readable syntax, standard type hints, and robust async/synchronous ecosystem. |
-| **Framework** | Django 5.x + DRF | Aligns directly with EVE Healthcare's public technology stack. Provides battle-tested serializers, security middleware, and ORM abstractions. |
+| **Framework** | Django (>=5.1, <6.2; tested with 6.1.1) + DRF | Aligns directly with EVE Healthcare's technology stack. Provides battle-tested serializers, security middleware, and ORM abstractions. |
 | **Primary Database** | PostgreSQL 16 | ACID transactions, exact NUMERIC currency storage, unique indexes for idempotency, and row-level locking (`SELECT ... FOR UPDATE`). |
 | **Identity & Tokens** | `djangorestframework-simplejwt` | Stateless authentication with short-lived access tokens (15m) and refresh tokens (7d). |
 | **API Contract & Docs** | `drf-spectacular` (OpenAPI 3.0) | Strict schema generation directly from serializers and view contracts without manual drift. |
 | **Containerization** | Docker & Docker Compose | Deterministic single-command local boot with automated migration and demo seeding. |
-| **Code Quality & Tests**| `pytest`, `pytest-django`, `ruff` | Blazing-fast linting, formatting, and high-coverage automated unit, integration, and concurrency tests. |
-| **Throttling / Cache** | Redis 7 (Optional) | Supportive distributed throttling and caching; never authoritative for bookings or money. |
+| **Code Quality & Tests**| `pytest`, `pytest-django`, `pytest-cov`, `ruff` | Fast linting, formatting, and high-coverage automated unit, integration, and concurrency tests. |
+| **Throttling Policies** | Django REST Framework Throttling | Scoped in-memory rate limiters for auth endpoints and webhook burst protection. |
 
 ---
 
@@ -100,7 +100,7 @@ Unlike trivial CRUD systems, this service is engineered around **financial and t
 
 ---
 
-## 5. Architectural Boundaries & Responsibility Separation
+## 5. Architectural Boundaries & Layer Isolation
 
 To guarantee long-term maintainability, the codebase adheres strictly to layer isolation:
 
@@ -116,7 +116,7 @@ To guarantee long-term maintainability, the codebase adheres strictly to layer i
 
 ```
 .
-├── .github/workflows/ci.yml       # GitHub Actions CI pipeline
+├── .github/workflows/ci.yml       # GitHub Actions CI pipeline (PostgreSQL 16, lint, test, docker)
 ├── accounts/                      # Identity, custom User model, JWT authentication
 │   ├── models.py                  # User model with UUID PK, normalized email
 │   ├── serializers.py             # Signup, Login, and User serializers
@@ -162,23 +162,21 @@ To guarantee long-term maintainability, the codebase adheres strictly to layer i
 │   ├── test_webhooks.py           # HMAC signature and deduplication tests
 │   ├── test_concurrency.py        # Multi-threaded PostgreSQL concurrency tests
 │   └── test_operations.py         # Health probes, OpenAPI, and correlation ID tests
-├── Dockerfile                     # Multi-stage Python 3.12-slim production Dockerfile
-├── docker-compose.yml             # Local stack: api, postgres:16-alpine, redis:7-alpine
+├── Dockerfile                     # Container definition based on python:3.12-slim
+├── docker-compose.yml             # Local stack: api, postgres:16-alpine
 ├── pyproject.toml                 # Package configuration, Ruff settings, Pytest options
-├── requirements.txt               # Version-constrained dependencies (with minimum and compatible upper bounds)
-├── .env.example                   # Annotated environment variable configuration
-├── CONTEXT.md                     # Persistent architectural context document
-├── ENGINEERING_JOURNAL.md         # Comprehensive chronological implementation record
-└── README.md                      # This documentation
+├── requirements.txt               # Version-constrained dependencies
+├── .env.example                   # Annotated environment variable configuration template
+└── README.md                      # Evaluation and setup documentation
 ```
 
 ---
 
 ## 7. How to Run Locally
 
-### Option A: Using Docker Compose (Recommended - Single Command)
+### Option A: Using Docker Compose (Primary & Recommended)
 
-The fastest and most reliable way to run the complete stack (API + PostgreSQL 16 + Redis) is using Docker Compose:
+The primary evaluation method is Docker Compose, which boots PostgreSQL 16 and the Django API:
 
 ```bash
 # 1. Clone the repository
@@ -193,26 +191,32 @@ docker compose up --build
 ```
 
 **What happens automatically:**
-1. PostgreSQL 16 boots and initializes the `eve_healthcare_db` database.
-2. The healthcheck waits until PostgreSQL is accepting connections.
-3. Django applies all migrations cleanly.
-4. The seeder populates deterministic demonstration data (Centres, Tests, Offerings, Admin, and Patient accounts).
-5. The API server starts on `http://localhost:8000`.
+1. PostgreSQL 16 starts and initializes the `eve_healthcare_db` database.
+2. The healthcheck confirms PostgreSQL is accepting connections.
+3. The Django container connects to PostgreSQL using the Docker network service name (`DB_HOST=db`).
+4. Django applies database migrations cleanly.
+5. The seeder populates deterministic demonstration data (Centres, Tests, Offerings, Admin, and Patient accounts).
+6. The API server starts on `http://localhost:8000`.
 
 ### Option B: Running Bare-Metal on Local Host
 
-If you have Python 3.12+ installed:
+If you have Python 3.12+ installed locally:
 
 ```bash
 # 1. Create and activate a virtual environment
 python -m venv .venv
-source .venv/bin/activate  # On Windows: .\.venv\Scripts\Activate.ps1
+source .venv/bin/activate  # On Windows PowerShell: .\.venv\Scripts\Activate.ps1
 
 # 2. Install dependencies
 pip install -r requirements.txt
 
-# 3. Configure environment variables (SQLite mode for instant local testing)
+# 3. Configure environment variables
+# For lightweight local testing without a local PostgreSQL instance:
 export USE_SQLITE="True"   # On Windows PowerShell: $env:USE_SQLITE="True"
+
+# Note: If connecting to a local PostgreSQL server directly on your host machine:
+# export DB_HOST="localhost"
+# export USE_SQLITE="False"
 
 # 4. Apply database migrations
 python manage.py migrate
@@ -298,64 +302,39 @@ curl -X POST http://localhost:8000/api/v1/auth/login/ \
 }
 ```
 
-### Step 2: Browse Catalog & Select Test Offering
+---
 
+### Step 2: Browse Diagnostic Centres & Test Offerings
+
+**List Centres (Filtered by Location):**
 ```bash
-# Browse centres in Gurugram
 curl -X GET "http://localhost:8000/api/v1/centres/?location=Gurugram"
 ```
-*Response excerpt:*
-```json
-{
-  "count": 1,
-  "results": [
-    {
-      "id": "3bb6efc8-9ff1-4560-a299-4c0388cb20c3",
-      "name": "EVE Diagnostics Central - Gurugram",
-      "location": "Sector 44, Gurugram, Haryana",
-      "is_active": true
-    }
-  ]
-}
-```
 
+**List Centre Tests & Authoritative Prices:**
 ```bash
-# List available tests and prices for that centre
-curl -X GET "http://localhost:8000/api/v1/centres/3bb6efc8-9ff1-4560-a299-4c0388cb20c3/tests/"
-```
-*Response excerpt:*
-```json
-{
-  "count": 4,
-  "results": [
-    {
-      "centre_test_id": "8d3e201b-9f93-4a11-8ec1-91a561bd11ef",
-      "test_id": "22ff7942-ec06-4444-93ec-e81be1e843bf",
-      "test_code": "MRI_BRAIN",
-      "test_name": "MRI Brain with Contrast",
-      "price": "3500.00"
-    }
-  ]
-}
+curl -X GET "http://localhost:8000/api/v1/centres/<CENTRE_UUID>/tests/"
 ```
 
-### Step 3: Book Appointment (Authoritative Pricing)
+---
 
-Client supplies `centre_test_id` and timezone-aware future `appointment_at`:
+### Step 3: Create Booking (Authoritative Pricing Snapshot)
+
+The client supplies only the offering identifier and desired appointment time. The server resolves the price and snapshots it into the booking record.
+
 ```bash
 curl -X POST http://localhost:8000/api/v1/bookings/ \
-  -H "Authorization: Bearer <JWT_ACCESS_TOKEN>" \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <JWT_ACCESS_TOKEN>" \
   -d '{
-    "centre_test_id": "8d3e201b-9f93-4a11-8ec1-91a561bd11ef",
+    "centre_test_id": "<CENTRE_TEST_UUID>",
     "appointment_at": "2026-10-15T09:30:00Z"
   }'
 ```
 *Response (`HTTP 201 Created`):*
 ```json
 {
-  "id": "e9b4e3d1-447e-4050-9fbb-d11cfc330366",
-  "user_id": "c1f7a01d-5a8e-4a61-827d-7bdf715b9c0a",
+  "id": "3f9e8a71-6c24-4d89-b821-4f108269e8b1",
   "centre_test_id": "8d3e201b-9f93-4a11-8ec1-91a561bd11ef",
   "centre_name": "EVE Diagnostics Central - Gurugram",
   "centre_location": "Sector 44, Gurugram, Haryana",
@@ -369,74 +348,147 @@ curl -X POST http://localhost:8000/api/v1/bookings/ \
 }
 ```
 
+---
+
 ### Step 4: Pay for Booking (Client Idempotency)
 
-The client passes a unique `Idempotency-Key`:
+Supply a unique `Idempotency-Key` header. If the network drops and the client repeats the request with the identical key, the server safely returns the original payment attempt without initiating a duplicate charge.
+
 ```bash
 curl -X POST http://localhost:8000/api/v1/payments/ \
-  -H "Authorization: Bearer <JWT_ACCESS_TOKEN>" \
-  -H "Idempotency-Key: e8a7824e-b5f7-4dc4-b778-4384efcf9109" \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <JWT_ACCESS_TOKEN>" \
+  -H "Idempotency-Key: client_req_uuid_999a8b" \
   -d '{
-    "booking_id": "e9b4e3d1-447e-4050-9fbb-d11cfc330366"
+    "booking_id": "3f9e8a71-6c24-4d89-b821-4f108269e8b1"
   }'
 ```
-*Response (`HTTP 201 Created`):*
+*Response (`HTTP 201 Created` on first call; `HTTP 200 OK` on idempotent retry):*
 ```json
 {
-  "id": "73c6838a-3642-4fec-be10-8b012674eec7",
-  "booking_id": "e9b4e3d1-447e-4050-9fbb-d11cfc330366",
-  "idempotency_key": "e8a7824e-b5f7-4dc4-b778-4384efcf9109",
-  "provider_reference": "pay_sim_91a82bc1f60e42d7",
+  "id": "7a8b9c0d-1e2f-3a4b-5c6d-7e8f9a0b1c2d",
+  "booking_id": "3f9e8a71-6c24-4d89-b821-4f108269e8b1",
+  "idempotency_key": "client_req_uuid_999a8b",
+  "provider_reference": "sim_prov_a8f9301b",
   "amount": "3500.00",
   "status": "SUCCESS",
   "attempt_number": 1,
-  "created_at": "2026-09-27T12:06:00Z"
+  "created_at": "2026-09-27T12:06:00Z",
+  "updated_at": "2026-09-27T12:06:01Z"
 }
 ```
 
-**Retrying with the exact same key** returns `HTTP 200 OK` with the exact same payment record without invoking the provider or creating duplicate records.
+---
+
+### Step 5: Webhook Status Callback (Signed HMAC-SHA256)
+
+When an asynchronous payment gateway updates payment status, it delivers a signed webhook to `POST /api/v1/payments/webhook/`.
+
+```bash
+# Headers:
+# X-Webhook-Timestamp: 1758974760
+# X-Webhook-Signature: <hex_digest of HMAC-SHA256(secret, timestamp + "." + raw_body)>
+curl -X POST http://localhost:8000/api/v1/payments/webhook/ \
+  -H "Content-Type: application/json" \
+  -H "X-Webhook-Timestamp: 1758974760" \
+  -H "X-Webhook-Signature: a9f8e7d6c5b4..." \
+  -d '{
+    "event_id": "evt_gateway_987654",
+    "event_type": "payment.success",
+    "provider_reference": "sim_prov_a8f9301b",
+    "amount": "3500.00",
+    "timestamp": 1758974760
+  }'
+```
+*Response (`HTTP 200 OK`):*
+```json
+{
+  "status": "processed",
+  "event_id": "evt_gateway_987654",
+  "booking_status": "CONFIRMED"
+}
+```
 
 ---
 
-## 11. Authoritative Pricing Model
-
-In real-world healthcare commerce, client devices (mobile phones, web browsers) cannot be trusted to state what a service costs. If a client sends `"amount": 1.00`, a buggy or insecure server might accept it.
-
-**In this implementation:**
-1. The client selects `centre_test_id`.
-2. The server loads the `CentreTest` record.
-3. The server verifies that the offering is active, the centre is active, and the diagnostic test is active.
-4. The server extracts `CentreTest.price`.
-5. The server stores that value in `Booking.amount`.
-6. Even if a client sends an `amount` field in the payload, it is strictly ignored.
-7. `Booking.amount` becomes an **immutable snapshot**. If scan centre fees change tomorrow, historical bookings retain the original agreed price.
-
----
-
-## 12. Booking Finite State Machine
-
-All status mutations must pass through the centralized `BookingStateMachine` inside `bookings/services.py`:
+## 11. Core Domain Models & Invariants
 
 ```
-                    +--------------------+
-                    |      PENDING       |
-                    +---+--------+---+---+
-                        |        |   |
-      Payment FAILED    |        |   | Payment SUCCESS
-            +-----------+        |   +------------+
-            |                    |                |
-            v                    | User cancels   v
-     +--------------+            |         +--------------+
-     |    FAILED    |            +-------->|  CANCELLED   |
-     +------+-------+                      +-------+------+
-            |                                      |
-            | Retry with new                       | Terminal State
-            | successful payment attempt           | (Never Resurrected!)
-            v                                      |
-     +--------------+                              v
-     |  CONFIRMED   +------------------------------+
-     +--------------+         User cancels
+                +-------------------------+
+                |     DiagnosticCentre    |
+                +-------------------------+
+                | name: CharField         |
+                | location: CharField     |
+                | is_active: BooleanField |
+                +------------+------------+
+                             | 1
+                             | offers
+                             | N
+                +------------v------------+              +-------------------------+
+                |       CentreTest        |   for test   |      DiagnosticTest     |
+                +-------------------------+------------->+-------------------------+
+                | centre: FK(Centre)      | N          1 | code: CharField (UNIQUE)|
+                | test: FK(Test)          |              | name: CharField         |
+                | price: Decimal(10,2)    |              | is_active: BooleanField |
+                | UNIQUE(centre, test)    |              +-------------------------+
+                | CHECK(price > 0)        |
+                +------------+------------+
+                             | 1
+                             | booked in
+                             | N
+                +------------v------------+
+                |         Booking         |
+                +-------------------------+
+                | user: FK(User)          |
+                | centre_test: FK         |
+                | appointment_at: DateTime|
+                | amount: Decimal(10,2)   | <--- Immutable snapshot from CentreTest
+                | status: BookingStatus   |      [PENDING, CONFIRMED, FAILED, CANCELLED]
+                | version: Integer        | <--- Optimistic concurrency counter
+                | CHECK(amount > 0)       |
+                +------------+------------+
+                             | 1
+                             | paid via
+                             | N
+                +------------v------------+              +-------------------------+
+                |         Payment         |              |       WebhookEvent      |
+                +-------------------------+              +-------------------------+
+                | booking: FK(Booking)    |              | event_id: Char (UNIQUE) |
+                | idempotency_key: UNIQUE |              | provider_reference: Char|
+                | provider_reference: UNIQ|              | payload_hash: Char(64)  |
+                | amount: Decimal(10,2)   |              | processed_at: DateTime  |
+                | status: PaymentStatus   |              +-------------------------+
+                | attempt_number: Integer |
+                | UNIQUE(booking, attempt)|
+                | CHECK(amount > 0)       |
+                +-------------------------+
+```
+
+---
+
+## 12. Finite State Machine & Lifecycle Rules
+
+All booking status transitions are mediated by the centralized `BookingStateMachine` in `bookings/services.py`:
+
+```
+                       +-----------------------+
+                       |        PENDING        |
+                       +-----------+-----------+
+                                   |
+         +-------------------------+-------------------------+
+         | (Payment Success)       | (Payment Failed)        | (User Cancels)
+         v                         v                         v
++-----------------+       +-----------------+       +-----------------+
+|    CONFIRMED    |       |     FAILED      |       |    CANCELLED    |
++--------+--------+       +--------+--------+       +-----------------+
+         |                         |                         ^
+         | (User Cancels)          | (Retry Payment Success) | (User Cancels)
+         v                         +-------------------------+
++-----------------+                |
+|    CANCELLED    |                v
++-----------------+       +-----------------+
+                          |    CONFIRMED    |
+                          +-----------------+
 ```
 
 ### Transition Invariants
@@ -444,6 +496,7 @@ All status mutations must pass through the centralized `BookingStateMachine` ins
 - `PENDING` $\rightarrow$ `FAILED` (On declined payment attempt or failure webhook)
 - `PENDING` $\rightarrow$ `CANCELLED` (On patient cancellation)
 - `FAILED` $\rightarrow$ `CONFIRMED` (Allowed when a new retry payment attempt succeeds)
+- `FAILED` $\rightarrow$ `CANCELLED` (Allowed if patient cancels after failure)
 - `CONFIRMED` $\rightarrow$ `CANCELLED` (Allowed under cancellation policy)
 - `CANCELLED` $\rightarrow$ Any (Forbidden! Cancelled bookings are never resurrected by late-arriving webhooks or retry attempts)
 
@@ -459,9 +512,10 @@ If both transactions execute concurrently without locking, one could confirm whi
 1. PostgreSQL row locks (`SELECT ... FOR UPDATE`) serialize concurrent transactions at the database boundary.
 2. **Canonical Lock Order**: Whenever an operation requires locking both a Booking and a Payment row, it **must** acquire them in this strict order:
    $$\text{Booking} \longrightarrow \text{Payment}$$
-   Acquiring locks in inconsistent orders (e.g. Path A: Booking then Payment; Path B: Payment then Booking) causes database **deadlocks**. This system uses canonical ordering universally across all code paths.
+   Acquiring locks in inconsistent orders causes database **deadlocks**. This system uses canonical ordering universally across all code paths.
 3. **Re-Read After Lock**: A service never relies on an in-memory object fetched prior to acquiring the lock. Once `select_for_update()` is granted, the committed status is re-read from PostgreSQL before applying the state transition.
 4. **Short Lock Windows**: External network calls to payment providers are **never** executed while holding database row locks. The intent is persisted, transaction committed, provider invoked outside the lock, and the result settled in a follow-up transaction.
+5. **Invariant**: No invalid, contradictory, or impossible state transition occurs. The race results in a valid final state according to the state machine (CONFIRMED or CANCELLED, never PENDING, never corrupted, and cancelled bookings are never resurrected).
 
 ---
 
@@ -559,7 +613,7 @@ While unit tests use SQLite for rapid execution, concurrency-critical tests (`te
 2. **Authoritative Centre-Specific Pricing**: Medical test definitions are reusable; prices are specific to individual scan centers via `CentreTest`.
 3. **No Capacity Engine**: The assignment specification does not define calendar slot capacity or machine availability; bookings do not enforce inventory limits.
 4. **Soft Deactivation**: Historical diagnostic offerings and centres are soft-deactivated (`is_active = False`) rather than deleted, preserving clinical audit integrity.
-5. **Redis is Non-Authoritative**: Redis is optionally used for distributed throttling and cache; PostgreSQL remains the sole source of truth for all financial transactions and booking states.
+5. **In-Memory Rate Limiting**: Scoped throttling policies (for authentication and webhooks) leverage Django REST Framework's built-in in-memory throttle caches. PostgreSQL remains the sole source of truth for all bookings and payments.
 6. **No Asynchronous Job Overhead**: Celery was deliberately omitted because booking and payment correctness are synchronous domain requirements. Asynchronous outbox processing is documented below as a future evolution.
 
 ---
